@@ -1,0 +1,7 @@
+data/
+models/*.pth
+__pycache__/
+*.pyc
+.venv/
+.DS_Store
+*.npy
