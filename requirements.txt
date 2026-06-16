@@ -1,0 +1,11 @@
+torch
+torchvision
+monai[all]
+nibabel
+SimpleITK
+streamlit
+matplotlib
+numpy
+pandas
+scikit-learn
+kagglehub
