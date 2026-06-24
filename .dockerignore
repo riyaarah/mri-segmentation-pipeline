@@ -1,0 +1,11 @@
+data/
+notebooks/
+*.npy
+*.ipynb
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+.git/
+README.md
+*.png
