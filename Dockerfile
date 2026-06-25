@@ -20,9 +20,11 @@ WORKDIR /app
 COPY --chown=user requirements-api.txt requirements.txt
 RUN pip install --no-cache-dir --upgrade -r requirements.txt
 
-# Copy application code and the trained model checkpoint
+# Copy application code (model checkpoint is downloaded from the HF
+# Model repo at container startup — see api/model.py — so it's not
+# baked into this image, keeping the image lean and decoupling
+# model updates from app redeploys)
 COPY --chown=user api/ ./api/
-COPY --chown=user models/best_model_colab.pth ./models/best_model_colab.pth
 
 # Hugging Face Spaces requires the app to listen on port 7860
 ENV PORT=7860

@@ -76,7 +76,22 @@ def crop_center(vol, size=(96, 96, 96)):
 _model = None
 _device = None
 
+# Local dev: looks for the checkpoint in models/. Deployed (HF Spaces):
+# falls back to downloading it from the HF Model repo at startup, since
+# the checkpoint isn't shipped inside the Docker image.
 MODEL_PATH = os.environ.get("MRI_MODEL_PATH", "models/best_model_colab.pth")
+HF_MODEL_REPO = os.environ.get("MRI_HF_MODEL_REPO", "riyaarahim/mri-tumor-segmentation-unet")
+HF_MODEL_FILENAME = os.environ.get("MRI_HF_MODEL_FILENAME", "best_model_colab.pth")
+
+
+def _resolve_model_path() -> str:
+    """Return a local path to the checkpoint, downloading from the Hub if needed."""
+    if os.path.exists(MODEL_PATH):
+        return MODEL_PATH
+
+    # Not found locally — download from the HF Model repo (cached after first run)
+    from huggingface_hub import hf_hub_download
+    return hf_hub_download(repo_id=HF_MODEL_REPO, filename=HF_MODEL_FILENAME)
 
 
 def get_model():
@@ -85,10 +100,8 @@ def get_model():
     if _model is None:
         _device = torch.device("cpu")
         _model = UNet3D(in_channels=4, num_classes=4, features=[32, 64, 128, 256])
-        if os.path.exists(MODEL_PATH):
-            _model.load_state_dict(torch.load(MODEL_PATH, map_location=_device))
-        else:
-            raise FileNotFoundError(f"Model checkpoint not found at {MODEL_PATH}")
+        resolved_path = _resolve_model_path()
+        _model.load_state_dict(torch.load(resolved_path, map_location=_device))
         _model.eval()
     return _model, _device
 
