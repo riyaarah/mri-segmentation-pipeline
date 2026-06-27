@@ -13,8 +13,9 @@ import nibabel as nib
 import numpy as np
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 
-from api.model import get_model, predict, compute_stats
+from api.model import get_model, predict, compute_stats, cache_result, get_cached_result, render_slice_image
 from api.schemas import PredictionResponse, HealthResponse, TumorStats
 
 app = FastAPI(
@@ -90,15 +91,47 @@ async def predict_segmentation(
             raise HTTPException(status_code=400, detail=f"Failed to read MRI file: {e}")
 
         try:
-            _, mask = predict(flair_arr, t1_arr, t1ce_arr, t2_arr)
+            volume, mask = predict(flair_arr, t1_arr, t1ce_arr, t2_arr)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Inference failed: {e}")
 
     stats = compute_stats(mask)
+    job_id = cache_result(volume, mask)
 
     return PredictionResponse(
         status="success",
         stats=TumorStats(**stats),
         mask_shape=list(mask.shape),
+        job_id=job_id,
+        slice_count=mask.shape[-1],
         message="Segmentation complete",
     )
+
+
+@app.get("/predict/slice/{job_id}")
+def get_slice_image(job_id: str, slice_idx: int = 48):
+    """
+    Render a single slice (FLAIR input / predicted mask / region overlay)
+    for a previously computed prediction, returned as a PNG image.
+
+    The job_id comes from a prior /predict call. Results are cached
+    server-side for 30 minutes.
+    """
+    result = get_cached_result(job_id)
+    if result is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No cached result for this job_id — it may have expired (30 min TTL) "
+                   "or never existed. Run /predict again to generate a new one."
+        )
+
+    volume, mask = result["volume"], result["mask"]
+    max_slice = volume.shape[-1] - 1
+    if not (0 <= slice_idx <= max_slice):
+        raise HTTPException(
+            status_code=400,
+            detail=f"slice_idx must be between 0 and {max_slice}"
+        )
+
+    png_bytes = render_slice_image(volume, mask, slice_idx)
+    return Response(content=png_bytes, media_type="image/png")

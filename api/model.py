@@ -136,3 +136,92 @@ def compute_stats(mask: np.ndarray) -> dict:
         "enhancing_tumor_pct": round(float((mask == 3).sum()) / total * 100, 2),
         "total_tumor_pct": round(float((mask > 0).sum()) / total * 100, 2),
     }
+
+
+# ── Result caching (so /predict/slice can render slices on demand
+# without re-running inference, and the frontend doesn't need to
+# transmit raw numpy arrays over HTTP) ─────────────────────────
+import time
+import uuid
+
+_RESULT_CACHE: dict[str, dict] = {}
+_CACHE_TTL_SECONDS = 30 * 60  # evict results after 30 minutes
+
+
+def cache_result(volume: np.ndarray, mask: np.ndarray) -> str:
+    """Store a prediction result server-side, return a job_id to retrieve it later."""
+    _evict_expired()
+    job_id = str(uuid.uuid4())
+    _RESULT_CACHE[job_id] = {
+        "volume": volume,
+        "mask": mask,
+        "created_at": time.time(),
+    }
+    return job_id
+
+
+def get_cached_result(job_id: str) -> dict | None:
+    _evict_expired()
+    return _RESULT_CACHE.get(job_id)
+
+
+def _evict_expired():
+    now = time.time()
+    expired = [k for k, v in _RESULT_CACHE.items() if now - v["created_at"] > _CACHE_TTL_SECONDS]
+    for k in expired:
+        del _RESULT_CACHE[k]
+
+
+# ── Slice rendering (API owns visualization, frontend just displays) ──
+def render_slice_image(volume: np.ndarray, mask: np.ndarray, slice_idx: int) -> bytes:
+    """
+    Render the 3-panel slice view (FLAIR input / predicted mask / region
+    overlay) for a single slice index, returned as PNG bytes.
+    """
+    import io
+    import matplotlib
+    matplotlib.use("Agg")  # headless rendering, no display needed on the server
+    import matplotlib.pyplot as plt
+    import matplotlib.patches as mpatches
+
+    flair_slice = volume[0, :, :, slice_idx]
+    mask_slice = mask[:, :, slice_idx]
+
+    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+    fig.patch.set_facecolor('#0e1117')
+
+    axes[0].imshow(flair_slice, cmap='gray')
+    axes[0].set_title('FLAIR Input', color='white', fontsize=13)
+    axes[0].axis('off')
+
+    cmap = plt.cm.get_cmap('jet', 4)
+    axes[1].imshow(flair_slice, cmap='gray')
+    axes[1].imshow(np.ma.masked_where(mask_slice == 0, mask_slice),
+                   cmap=cmap, alpha=0.6, vmin=0, vmax=3)
+    axes[1].set_title('Predicted Tumor Mask', color='white', fontsize=13)
+    axes[1].axis('off')
+
+    axes[2].imshow(flair_slice, cmap='gray')
+    axes[2].imshow(np.ma.masked_where(mask_slice != 1, mask_slice),
+                   cmap='Reds', alpha=0.7, vmin=0, vmax=3)
+    axes[2].imshow(np.ma.masked_where(mask_slice != 2, mask_slice),
+                   cmap='Greens', alpha=0.7, vmin=0, vmax=3)
+    axes[2].imshow(np.ma.masked_where(mask_slice != 3, mask_slice),
+                   cmap='Blues', alpha=0.7, vmin=0, vmax=3)
+    axes[2].set_title('Region Overlay', color='white', fontsize=13)
+    axes[2].axis('off')
+
+    patches = [
+        mpatches.Patch(color='red',   label='Necrotic Core'),
+        mpatches.Patch(color='green', label='Edema'),
+        mpatches.Patch(color='blue',  label='Enhancing Tumor'),
+    ]
+    fig.legend(handles=patches, loc='lower center', ncol=3,
+               facecolor='#0e1117', labelcolor='white', fontsize=11)
+    plt.tight_layout()
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format='png', facecolor=fig.get_facecolor())
+    plt.close(fig)
+    buf.seek(0)
+    return buf.read()

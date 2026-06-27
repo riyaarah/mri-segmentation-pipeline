@@ -15,6 +15,8 @@ class PredictionResponse(BaseModel):
     status: str
     stats: TumorStats
     mask_shape: list[int]
+    job_id: str
+    slice_count: int
     message: str | None = None
 
 
