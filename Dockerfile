@@ -17,6 +17,12 @@ ENV PATH="/home/user/.local/bin:$PATH"
 WORKDIR /app
 
 # Install Python dependencies first (better layer caching on rebuilds)
+# torch is installed separately with the CPU-only index — this is the
+# correct way to pin it (inlining --index-url inside requirements.txt
+# does not reliably work with pip's resolver) and avoids pulling in
+# ~2GB of unused CUDA/GPU libraries on this CPU-only deployment
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
+
 COPY --chown=user requirements-api.txt requirements.txt
 RUN pip install --no-cache-dir --upgrade -r requirements.txt
 
